@@ -27,12 +27,12 @@ Every board a terminal deals follows from one seed: `setup_game` shuffles the sy
 
 - 2026-10-24 (user): BetterBrainer's features come from the BetterBrainer submodule instead of copies. NoBrainer's own features (Smart Seed Reroll, servo skull) are implemented in this repository on top of it.
   - Smart Seed Reroll returns. It replaces 3.2.0's implementation, which used the removed legacy input route, with a wrapper around BetterBrainer's Symbols solver and reopen controller. The setting id `enable_decode_smart_reroll` is kept. Its 3.2.0 cap of two rerolls is replaced by `decode_reroll_limit`.
-  - The copied BetterBrainer test suites are removed; they run in the submodule against the same files.
+  - The copied BetterBrainer test suites are removed. `tests/betterbrainer_suites.lua` runs the submodule's suites, unchanged, through NoBrainer's core instead (`tests/fixture.lua`, on the historical `tests/better_brainer_spec.lua` from the BetterBrainer workspace).
 - 2026-10-14 (user): replace every NoBrainer solver with BetterBrainer's current version. Keep the servo skull feature. Setting ids are shared with BetterBrainer, so saved values carry over.
 
 ## Runtime status
 
-- Offline: `tests/README.md`.
+- Offline: `tests/README.md`. BetterBrainer's own suites pass through NoBrainer's core (`tests/betterbrainer_suites.lua`).
 - In game: NoBrainer 4.1.0 is not tested. In particular, the client seed reconstruction depends on clients adding minigame extensions in the server's order. When that fails, the seed is not found and the average-board reroll is used.
 - Smallest test, with DMF debug logging on and `Reroll Slow Boards` at 2 or more:
   1. As host (solo), hack Decode Symbols terminals: expect `Seed board kept (host seed)` or `Seed board rerolled (host seed)` lines; after a reroll, `(predicted seed)`.
