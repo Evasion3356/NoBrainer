@@ -1,7 +1,8 @@
 -- Run from the repository root with LuaJIT: luajit tests/nobrainer_spec.lua
 -- NoBrainer on top of the BetterBrainer submodule, through a minimal DMF stub: the import of BetterBrainer's core,
 -- data and localization, and Smart Seed Reroll's decisions through BetterBrainer's Symbols solver. Engine
--- functions are stubs; math.next_random is a stand-in generator, so board values are not the game's.
+-- functions are stubs. Boards come from the game's setup_game (tests/darktide_source.lua fetches it), but
+-- math.next_random is native to the engine, so a stand-in generator replaces it.
 assert(jit and jit.version, "LuaJIT required")
 local failures, checks = 0, 0
 local function check(cond, what)
@@ -91,25 +92,63 @@ end
 check(hooks["MinigameSystem.init"] and hooks["MinigameSystem.on_add_extension"], "seed tracking hooks")
 mod.update(0.02)
 
--- Board generation as the game does it, to set up minigames.
+-- Boards come from the game's own MinigameDecodeSymbols.setup_game, minigame settings and table.shuffle.
+local source = dofile("tests/darktide_source.lua")
+local SYMBOLS = "scripts/extension_systems/minigame/minigames/minigame_decode_symbols.lua"
+local SETTINGS = "scripts/settings/minigame/minigame_settings.lua"
+local TABLE = "scripts/foundation/utilities/table.lua"
+local root = source.root({ SYMBOLS, SETTINGS, TABLE })
+local game = setmetatable({}, { __index = _G })
+game.table = setmetatable({ enum = function(...)
+    local enum = {}
+    for _, name in ipairs({ ... }) do enum[name] = name end
+    return enum
+end }, { __index = table })
+function game.settings(_, values) return values end
+game.math = setmetatable({ degrees_to_radians = function(d) return d * math.pi / 180 end }, { __index = math })
+local function load_source(file, text)
+    local chunk = assert(loadstring(text or source.read(root, file), "@" .. file))
+    setfenv(chunk, game)
+    return chunk()
+end
+-- table.lua as a whole needs much of the engine; only table.shuffle is taken from it.
+local shuffle = assert(source.read(root, TABLE):match("\n(table%.shuffle = function.-\nend)\n"), "table.shuffle not found")
+shuffle = assert(loadstring("local table = ...\n" .. shuffle, "@" .. TABLE))
+setfenv(shuffle, game)
+shuffle(game.table)
+local classes = { MinigameBase = { setup_game = function() end } }
+function game.class(name, super)
+    local class = { super = classes[super] }
+    class.__index = class
+    classes[name] = class
+    return class
+end
+local Settings = load_source(SETTINGS)
+function game.require(path)
+    if path == "scripts/settings/minigame/minigame_settings" then return Settings end
+    return {}
+end
+game.Managers = { state = { game_session = { send_rpc_clients = function() end },
+    unit_spawner = { game_object_id_or_level_index = function() return false, 1 end } } }
+local DecodeSymbols = load_source(SYMBOLS)
+
+-- One setup_game from seed `s`: the board it deals and the seed it leaves behind.
 local function board(s)
-    local symbols_, targets = {}, {}
-    for i = 1, 28 do symbols_[i] = i end
-    for i = 28, 2, -1 do local swap; s, swap = math.next_random(s, i); symbols_[swap], symbols_[i] = symbols_[i], symbols_[swap] end
-    local prev
-    for st = 1, 4 do
-        local tg
-        if prev then s, tg = math.next_random(s, 1, 6); if prev <= tg then tg = tg + 1 end else s, tg = math.next_random(s, 1, 7) end
-        targets[st], prev = tg, tg
-    end
-    return symbols_, targets, s
+    local mg = setmetatable({ _seed = s, _stage_amount = Settings.decode_symbols_stage_amount,
+        _decode_symbols_items_per_stage = Settings.decode_symbols_items_per_stage,
+        _decode_symbols_total_items = Settings.decode_symbols_total_items,
+        _symbols = {}, _decode_targets = {}, _minigame_unit = {} }, DecodeSymbols)
+    mg:setup_game()
+    return mg._symbols, mg._decode_targets, mg._seed
 end
 
 local function minigame(is_server, s, extension)
     local symbols_, targets, post = board(s)
     local mg = { _is_server = is_server, _seed = is_server and post or nil, _symbols = symbols_, _decode_targets = targets,
-        _decode_start_time = 10, _current_stage = 1, _stage_amount = 4, _decode_symbols_items_per_stage = 7,
-        _decode_symbols_sweep_duration = 2, _current_state = "gameplay", _minigame_extension = extension }
+        _decode_start_time = 10, _current_stage = 1, _stage_amount = Settings.decode_symbols_stage_amount,
+        _decode_symbols_items_per_stage = Settings.decode_symbols_items_per_stage,
+        _decode_symbols_sweep_duration = Settings.decode_symbols_sweep_duration, _current_state = "gameplay",
+        _minigame_extension = extension }
     function mg:is_completed() return false end
     return mg, post
 end
